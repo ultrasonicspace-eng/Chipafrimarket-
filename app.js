@@ -1,22 +1,595 @@
-const cfg=window.CHIPA_CONFIG, markets=window.AFRICAN_MARKETS;
-const $=s=>document.querySelector(s);
-let sb=null, products=[], cart=[], rates={USD:1}, currency="USD", country="";
-if(cfg.SUPABASE_URL.startsWith("http") && !cfg.SUPABASE_ANON_KEY.startsWith("YOUR_")) sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
-const select=$("#countrySelect");
-markets.forEach(([name,code,cur])=>{let o=document.createElement("option");o.value=code;o.textContent=`${name} (${cur})`;select.append(o)});
-const saved=localStorage.getItem("chipa-country")||"NG";select.value=saved;setMarket(saved);
-select.addEventListener("change",()=>{setMarket(select.value);renderProducts();renderCart()});
-function setMarket(code){country=code;let m=markets.find(x=>x[1]===code);currency=m?m[2]:"USD";localStorage.setItem("chipa-country",code)}
-async function loadRates(){try{let r=await fetch("https://open.er-api.com/v6/latest/USD");let j=await r.json();if(j.result==="success"){rates=j.rates;$("#rateStatus").textContent=`Reference rates updated: ${new Date(j.time_last_update_utc).toLocaleDateString()}`}}catch(e){$("#rateStatus").textContent="Exchange rates unavailable; showing USD prices."}}
-function money(usd){let amount=Number(usd)*(rates[currency]||1);try{return new Intl.NumberFormat(undefined,{style:"currency",currency}).format(amount)}catch{return `${currency} ${amount.toFixed(2)}`}}
-function salePrice(p){return p.discount_enabled?Number(p.price_usd)*(1-cfg.DISCOUNT_PERCENT/100):Number(p.price_usd)}
-async function loadProducts(){if(!sb){$("#products").innerHTML='<p>Connect Supabase in config.js and add products in the admin portal. Demo setup instructions are in README-SETUP.txt.</p>';return}
-let {data,error}=await sb.from("products").select("*").eq("active",true).order("created_at",{ascending:false});if(error){$("#products").textContent=error.message;return}products=data||[];renderProducts()}
-function renderProducts(){let q=$("#search").value.toLowerCase();let shown=products.filter(p=>(p.name+" "+(p.description||"")).toLowerCase().includes(q));$("#products").innerHTML=shown.length?shown.map(p=>`<article class="product"><img src="${esc(p.image_url||"https://placehold.co/600x400?text=Chipafrimarket")}" alt=""><div class="product-info"><h3>${esc(p.name)}</h3><div class="price">${money(salePrice(p))}${p.discount_enabled?'<span class="old">'+money(p.price_usd)+'</span>':''}</div><p>${esc(p.description||"")}</p><button data-add="${p.id}">Add to cart</button></div></article>`).join(""):"<p>No products found.</p>";document.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{let p=products.find(x=>x.id===b.dataset.add);cart.push(p);renderCart()})}
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-function renderCart(){$("#cartCount").textContent=cart.length;$("#cartItems").innerHTML=cart.map((p,i)=>`<div class="cart-line"><span>${esc(p.name)}<br>${money(salePrice(p))}</span><button data-remove="${i}">Remove</button></div>`).join("");$("#cartTotal").textContent="Total: "+money(cart.reduce((s,p)=>s+salePrice(p),0));document.querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>{cart.splice(+b.dataset.remove,1);renderCart()})}
-$("#cartButton").onclick=()=>$("#cartPanel").classList.add("open");$("#closeCart").onclick=()=>$("#cartPanel").classList.remove("open");
-$("#checkoutBtn").onclick=()=>{if(!cart.length)return alert("Your cart is empty.");$("#checkoutDialog").showModal()};
-$("#cancelCheckout").onclick=()=>$("#checkoutDialog").close();$("#search").oninput=renderProducts;
-$("#checkoutForm").onsubmit=async e=>{e.preventDefault();if(!sb)return alert("Supabase is not configured.");let f=new FormData(e.target);let total=cart.reduce((s,p)=>s+salePrice(p),0);let order={customer_name:f.get("customer_name"),email:f.get("email"),phone:f.get("phone"),address:f.get("address"),country_code:country,currency_code:currency,items:cart.map(p=>({product_id:p.id,name:p.name,unit_price_usd:salePrice(p)})),total_usd:total,status:"pending"};let {error}=await sb.from("orders").insert(order);if(error){alert("Order request failed: "+error.message);return}alert("Order request submitted. The team will contact you to confirm availability, delivery and final price.");cart=[];renderCart();e.target.reset();$("#checkoutDialog").close();$("#cartPanel").classList.remove("open")};
-(async()=>{await loadRates();await loadProducts();renderCart()})();
+
+const cfg = window.CHIPA_CONFIG;
+const markets = window.AFRICAN_MARKETS;
+
+const $ = s => document.querySelector(s);
+
+let sb = null;
+let products = [];
+let cart = [];
+let rates = { USD: 1 };
+let currency = "USD";
+let country = "";
+let currentUser = null;
+let customerOrders = [];
+
+if (
+  cfg.SUPABASE_URL.startsWith("http") &&
+  !cfg.SUPABASE_ANON_KEY.startsWith("YOUR_")
+) {
+  sb = window.supabase.createClient(
+    cfg.SUPABASE_URL,
+    cfg.SUPABASE_ANON_KEY
+  );
+}
+
+// ------------------------------
+// COUNTRY AND CURRENCY
+// ------------------------------
+
+const select = $("#countrySelect");
+
+markets.forEach(([name, code, cur]) => {
+  const option = document.createElement("option");
+  option.value = code;
+  option.textContent = `${name} (${cur})`;
+  select.append(option);
+});
+
+const saved = localStorage.getItem("chipa-country") || "NG";
+select.value = saved;
+setMarket(saved);
+
+select.addEventListener("change", () => {
+  setMarket(select.value);
+  renderProducts();
+  renderCart();
+});
+
+function setMarket(code) {
+  country = code;
+  const market = markets.find(x => x[1] === code);
+  currency = market ? market[2] : "USD";
+  localStorage.setItem("chipa-country", code);
+}
+
+// ------------------------------
+// EXCHANGE RATES
+// ------------------------------
+
+async function loadRates() {
+  try {
+    const response = await fetch(
+      "https://open.er-api.com/v6/latest/USD"
+    );
+
+    const data = await response.json();
+
+    if (data.result === "success") {
+      rates = data.rates;
+      $("#rateStatus").textContent =
+        "Reference rates updated: " +
+        new Date(data.time_last_update_utc).toLocaleDateString();
+    }
+  } catch {
+    $("#rateStatus").textContent =
+      "Exchange rates unavailable; showing USD prices.";
+  }
+}
+
+function money(usd) {
+  const amount = Number(usd) * (rates[currency] || 1);
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`;
+  }
+}
+
+function salePrice(product) {
+  return product.discount_enabled
+    ? Number(product.price_usd) *
+      (1 - cfg.DISCOUNT_PERCENT / 100)
+    : Number(product.price_usd);
+}
+
+// ------------------------------
+// SECURITY / HTML DISPLAY
+// ------------------------------
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[char]);
+}
+
+function showMessage(message) {
+  $("#accountMessage").textContent = message;
+}
+
+// ------------------------------
+// CUSTOMER AUTHENTICATION
+// ------------------------------
+
+function emailRedirectUrl() {
+  return window.location.origin + window.location.pathname;
+}
+
+function updateAccountInterface() {
+  const loggedIn = Boolean(currentUser);
+
+  $("#registerSection").hidden = loggedIn;
+  $("#loginSection").hidden = loggedIn;
+  $("#resendVerification").hidden = loggedIn;
+  $("#loggedInSection").hidden = !loggedIn;
+
+  if (loggedIn) {
+    const name =
+      currentUser.user_metadata?.full_name ||
+      currentUser.email;
+
+    $("#customerGreeting").textContent =
+      `Welcome, ${name}`;
+
+    showMessage("You are signed in.");
+  } else {
+    $("#customerGreeting").textContent = "";
+  }
+}
+
+async function refreshCustomerOrders() {
+  if (!sb || !currentUser) return;
+
+  const { data, error } = await sb
+    .from("orders")
+    .select("*")
+    .eq("user_id", currentUser.id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    $("#customerOrders").textContent =
+      "Could not load orders: " + error.message;
+    return;
+  }
+
+  customerOrders = data || [];
+  renderCustomerOrders();
+}
+
+function renderCustomerOrders() {
+  const container = $("#customerOrders");
+
+  if (!customerOrders.length) {
+    container.innerHTML = "<p>You have no orders yet.</p>";
+    return;
+  }
+
+  container.innerHTML = customerOrders.map(order => `
+    <article class="product">
+      <div class="product-info">
+        <h3>Order ${esc(order.id.slice(0, 8))}</h3>
+        <p>Date: ${esc(new Date(order.created_at).toLocaleString())}</p>
+        <p>Status: ${esc(order.status)}</p>
+        <p>Total: USD ${Number(order.total_usd).toFixed(2)}</p>
+        <button type="button" data-receipt="${esc(order.id)}">
+          View receipt
+        </button>
+      </div>
+    </article>
+  `).join("");
+
+  container.querySelectorAll("[data-receipt]").forEach(button => {
+    button.addEventListener("click", () => {
+      const order = customerOrders.find(
+        item => item.id === button.dataset.receipt
+      );
+
+      if (order) showReceipt(order);
+    });
+  });
+}
+
+// REGISTER
+$("#registerForm").addEventListener("submit", async event => {
+  event.preventDefault();
+
+  if (!sb) return alert("Supabase is not configured.");
+
+  const form = new FormData(event.target);
+
+  const fullName = form.get("full_name").trim();
+  const email = form.get("email").trim();
+  const password = form.get("password");
+
+  showMessage("Creating your account...");
+
+  const { data, error } = await sb.auth.signUp({
+    email,
+    password,
+    options: {
+      data: { full_name: fullName },
+      emailRedirectTo: emailRedirectUrl()
+    }
+  });
+
+  if (error) {
+    showMessage(error.message);
+    return;
+  }
+
+  if (data.session) {
+    showMessage("Your account is ready. You are signed in.");
+  } else {
+    showMessage(
+      "Registration successful! Check your email and click the verification link before signing in."
+    );
+  }
+
+  event.target.reset();
+});
+
+// LOGIN
+$("#loginForm").addEventListener("submit", async event => {
+  event.preventDefault();
+
+  if (!sb) return alert("Supabase is not configured.");
+
+  const form = new FormData(event.target);
+
+  showMessage("Signing in...");
+
+  const { error } = await sb.auth.signInWithPassword({
+    email: form.get("email").trim(),
+    password: form.get("password")
+  });
+
+  if (error) {
+    showMessage(error.message);
+    return;
+  }
+
+  showMessage("Login successful.");
+  event.target.reset();
+});
+
+// RESEND VERIFICATION
+$("#resendVerification").addEventListener("click", async () => {
+  if (!sb) return;
+
+  const email = $("#registerForm [name=email]").value.trim()
+    || $("#loginForm [name=email]").value.trim();
+
+  if (!email) {
+    showMessage("Enter your email address first.");
+    return;
+  }
+
+  showMessage("Sending verification email...");
+
+  const { error } = await sb.auth.resend({
+    type: "signup",
+    email,
+    options: {
+      emailRedirectTo: emailRedirectUrl()
+    }
+  });
+
+  showMessage(
+    error ? error.message : "Verification email sent. Check your inbox."
+  );
+});
+
+// LOGOUT
+$("#signOutButton").addEventListener("click", async () => {
+  if (!sb) return;
+
+  const { error } = await sb.auth.signOut();
+
+  if (error) {
+    showMessage(error.message);
+    return;
+  }
+
+  currentUser = null;
+  customerOrders = [];
+  updateAccountInterface();
+
+  $("#orderHistory").hidden = true;
+  showMessage("You have signed out.");
+});
+
+// ACCOUNT DIALOG
+$("#accountButton").addEventListener("click", () => {
+  $("#accountDialog").showModal();
+});
+
+$("#closeAccount").addEventListener("click", () => {
+  $("#accountDialog").close();
+});
+
+$("#viewOrdersButton").addEventListener("click", async () => {
+  $("#accountDialog").close();
+  $("#orderHistory").hidden = false;
+  $("#orderHistory").scrollIntoView({ behavior: "smooth" });
+
+  await refreshCustomerOrders();
+});
+
+// CHECK EXISTING LOGIN SESSION
+async function initializeAuth() {
+  if (!sb) {
+    showMessage("Connect Supabase before using customer accounts.");
+    return;
+  }
+
+  const { data } = await sb.auth.getSession();
+
+  currentUser = data.session?.user || null;
+  updateAccountInterface();
+
+  if (currentUser) {
+    await refreshCustomerOrders();
+  }
+
+  sb.auth.onAuthStateChange((_event, session) => {
+    currentUser = session?.user || null;
+    updateAccountInterface();
+  });
+}
+
+// ------------------------------
+// PRODUCTS
+// ------------------------------
+
+async function loadProducts() {
+  if (!sb) {
+    $("#products").innerHTML =
+      "<p>Connect Supabase in config.js and add products in the admin portal.</p>";
+    return;
+  }
+
+  const { data, error } = await sb
+    .from("products")
+    .select("*")
+    .eq("active", true)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    $("#products").textContent = error.message;
+    return;
+  }
+
+  products = data || [];
+  renderProducts();
+}
+
+function renderProducts() {
+  const query = $("#search").value.toLowerCase();
+
+  const shown = products.filter(product =>
+    (product.name + " " + (product.description || ""))
+      .toLowerCase()
+      .includes(query)
+  );
+
+  $("#products").innerHTML = shown.length
+    ? shown.map(product => `
+      <article class="product">
+        <img
+          src="${esc(product.image_url || "https://placehold.co/600x400?text=Chipafrimarket")}"
+          alt="${esc(product.name)}"
+        >
+        <div class="product-info">
+          <h3>${esc(product.name)}</h3>
+          <div class="price">
+            ${money(salePrice(product))}
+            ${product.discount_enabled
+              ? `<span class="old">${money(product.price_usd)}</span>`
+              : ""}
+          </div>
+          <p>${esc(product.description || "")}</p>
+          <button type="button" data-add="${esc(product.id)}">
+            Add to cart
+          </button>
+        </div>
+      </article>
+    `).join("")
+    : "<p>No products found.</p>";
+
+  document.querySelectorAll("[data-add]").forEach(button => {
+    button.addEventListener("click", () => {
+      const product = products.find(
+        item => item.id === button.dataset.add
+      );
+
+      if (product) {
+        cart.push(product);
+        renderCart();
+      }
+    });
+  });
+}
+
+// ------------------------------
+// SHOPPING CART
+// ------------------------------
+
+function renderCart() {
+  $("#cartCount").textContent = cart.length;
+
+  $("#cartItems").innerHTML = cart.map((product, index) => `
+    <div class="cart-line">
+      <span>
+        ${esc(product.name)}<br>
+        ${money(salePrice(product))}
+      </span>
+      <button type="button" data-remove="${index}">Remove</button>
+    </div>
+  `).join("");
+
+  $("#cartTotal").textContent =
+    "Total: " +
+    money(cart.reduce(
+      (sum, product) => sum + salePrice(product), 0
+    ));
+
+  document.querySelectorAll("[data-remove]").forEach(button => {
+    button.addEventListener("click", () => {
+      cart.splice(Number(button.dataset.remove), 1);
+      renderCart();
+    });
+  });
+}
+
+$("#cartButton").addEventListener("click", () => {
+  $("#cartPanel").classList.add("open");
+});
+
+$("#closeCart").addEventListener("click", () => {
+  $("#cartPanel").classList.remove("open");
+});
+
+$("#search").addEventListener("input", renderProducts);
+
+// ------------------------------
+// CHECKOUT
+// ------------------------------
+
+$("#checkoutBtn").addEventListener("click", () => {
+  if (!cart.length) {
+    alert("Your cart is empty.");
+    return;
+  }
+
+  $("#checkoutDialog").showModal();
+
+  if (currentUser) {
+    $("#checkoutForm [name=email]").value =
+      currentUser.email || "";
+
+    $("#checkoutForm [name=customer_name]").value =
+      currentUser.user_metadata?.full_name || "";
+  }
+});
+
+$("#cancelCheckout").addEventListener("click", () => {
+  $("#checkoutDialog").close();
+});
+
+// ------------------------------
+// ORDER RECEIPT
+// ------------------------------
+
+function showReceipt(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  $("#receiptContent").innerHTML = `
+    <p><strong>Chipafrimarket</strong></p>
+    <p>Order reference: ${esc(order.id || "Submitted")}</p>
+    <p>Customer: ${esc(order.customer_name)}</p>
+    <p>Email: ${esc(order.email)}</p>
+    <p>Phone: ${esc(order.phone)}</p>
+    <p>Delivery address: ${esc(order.address)}</p>
+    <p>Date: ${esc(order.created_at
+      ? new Date(order.created_at).toLocaleString()
+      : new Date().toLocaleString())}</p>
+    <hr>
+    <h3>Items</h3>
+    ${items.map(item => `
+      <p>${esc(item.name)} — USD ${Number(item.unit_price_usd).toFixed(2)}</p>
+    `).join("")}
+    <hr>
+    <h3>Total: USD ${Number(order.total_usd).toFixed(2)}</h3>
+    <p>Status: ${esc(order.status || "pending")}</p>
+    <p>Thank you for shopping with Chipafrimarket.</p>
+  `;
+
+  $("#receiptDialog").showModal();
+}
+
+$("#closeReceipt").addEventListener("click", () => {
+  $("#receiptDialog").close();
+});
+
+// ------------------------------
+// SUBMIT ORDER
+// ------------------------------
+
+$("#checkoutForm").addEventListener("submit", async event => {
+  event.preventDefault();
+
+  if (!sb) return alert("Supabase is not configured.");
+
+  if (!cart.length) return alert("Your cart is empty.");
+
+  const form = new FormData(event.target);
+
+  const total = cart.reduce(
+    (sum, product) => sum + salePrice(product), 0
+  );
+
+  const order = {
+    customer_name: form.get("customer_name"),
+    email: form.get("email"),
+    phone: form.get("phone"),
+    address: form.get("address"),
+    country_code: country,
+    currency_code: currency,
+
+    user_id: currentUser ? currentUser.id : null,
+
+    items: cart.map(product => ({
+      product_id: product.id,
+      name: product.name,
+      unit_price_usd: salePrice(product)
+    })),
+
+    total_usd: total,
+    status: "pending"
+  };
+
+  const { error } = await sb.from("orders").insert(order);
+
+  if (error) {
+    alert("Order request failed: " + error.message);
+    return;
+  }
+
+  const receipt = {
+    ...order,
+    created_at: new Date().toISOString()
+  };
+
+  cart = [];
+  renderCart();
+
+  event.target.reset();
+
+  $("#checkoutDialog").close();
+  $("#cartPanel").classList.remove("open");
+
+  showReceipt(receipt);
+
+  if (currentUser) {
+    await refreshCustomerOrders();
+  }
+});
+
+// ------------------------------
+// START WEBSITE
+// ------------------------------
+
+(async () => {
+  await initializeAuth();
+  await loadRates();
+  await loadProducts();
+  renderCart();
+})();
