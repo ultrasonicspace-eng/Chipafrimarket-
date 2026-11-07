@@ -1,0 +1,22 @@
+const cfg=window.CHIPA_CONFIG, markets=window.AFRICAN_MARKETS;
+const $=s=>document.querySelector(s);
+let sb=null, products=[], cart=[], rates={USD:1}, currency="USD", country="";
+if(cfg.SUPABASE_URL.startsWith("http") && !cfg.SUPABASE_ANON_KEY.startsWith("YOUR_")) sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
+const select=$("#countrySelect");
+markets.forEach(([name,code,cur])=>{let o=document.createElement("option");o.value=code;o.textContent=`${name} (${cur})`;select.append(o)});
+const saved=localStorage.getItem("chipa-country")||"NG";select.value=saved;setMarket(saved);
+select.addEventListener("change",()=>{setMarket(select.value);renderProducts();renderCart()});
+function setMarket(code){country=code;let m=markets.find(x=>x[1]===code);currency=m?m[2]:"USD";localStorage.setItem("chipa-country",code)}
+async function loadRates(){try{let r=await fetch("https://open.er-api.com/v6/latest/USD");let j=await r.json();if(j.result==="success"){rates=j.rates;$("#rateStatus").textContent=`Reference rates updated: ${new Date(j.time_last_update_utc).toLocaleDateString()}`}}catch(e){$("#rateStatus").textContent="Exchange rates unavailable; showing USD prices."}}
+function money(usd){let amount=Number(usd)*(rates[currency]||1);try{return new Intl.NumberFormat(undefined,{style:"currency",currency}).format(amount)}catch{return `${currency} ${amount.toFixed(2)}`}}
+function salePrice(p){return p.discount_enabled?Number(p.price_usd)*(1-cfg.DISCOUNT_PERCENT/100):Number(p.price_usd)}
+async function loadProducts(){if(!sb){$("#products").innerHTML='<p>Connect Supabase in config.js and add products in the admin portal. Demo setup instructions are in README-SETUP.txt.</p>';return}
+let {data,error}=await sb.from("products").select("*").eq("active",true).order("created_at",{ascending:false});if(error){$("#products").textContent=error.message;return}products=data||[];renderProducts()}
+function renderProducts(){let q=$("#search").value.toLowerCase();let shown=products.filter(p=>(p.name+" "+(p.description||"")).toLowerCase().includes(q));$("#products").innerHTML=shown.length?shown.map(p=>`<article class="product"><img src="${esc(p.image_url||"https://placehold.co/600x400?text=Chipafrimarket")}" alt=""><div class="product-info"><h3>${esc(p.name)}</h3><div class="price">${money(salePrice(p))}${p.discount_enabled?'<span class="old">'+money(p.price_usd)+'</span>':''}</div><p>${esc(p.description||"")}</p><button data-add="${p.id}">Add to cart</button></div></article>`).join(""):"<p>No products found.</p>";document.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{let p=products.find(x=>x.id===b.dataset.add);cart.push(p);renderCart()})}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function renderCart(){$("#cartCount").textContent=cart.length;$("#cartItems").innerHTML=cart.map((p,i)=>`<div class="cart-line"><span>${esc(p.name)}<br>${money(salePrice(p))}</span><button data-remove="${i}">Remove</button></div>`).join("");$("#cartTotal").textContent="Total: "+money(cart.reduce((s,p)=>s+salePrice(p),0));document.querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>{cart.splice(+b.dataset.remove,1);renderCart()})}
+$("#cartButton").onclick=()=>$("#cartPanel").classList.add("open");$("#closeCart").onclick=()=>$("#cartPanel").classList.remove("open");
+$("#checkoutBtn").onclick=()=>{if(!cart.length)return alert("Your cart is empty.");$("#checkoutDialog").showModal()};
+$("#cancelCheckout").onclick=()=>$("#checkoutDialog").close();$("#search").oninput=renderProducts;
+$("#checkoutForm").onsubmit=async e=>{e.preventDefault();if(!sb)return alert("Supabase is not configured.");let f=new FormData(e.target);let total=cart.reduce((s,p)=>s+salePrice(p),0);let order={customer_name:f.get("customer_name"),email:f.get("email"),phone:f.get("phone"),address:f.get("address"),country_code:country,currency_code:currency,items:cart.map(p=>({product_id:p.id,name:p.name,unit_price_usd:salePrice(p)})),total_usd:total,status:"pending"};let {error}=await sb.from("orders").insert(order);if(error){alert("Order request failed: "+error.message);return}alert("Order request submitted. The team will contact you to confirm availability, delivery and final price.");cart=[];renderCart();e.target.reset();$("#checkoutDialog").close();$("#cartPanel").classList.remove("open")};
+(async()=>{await loadRates();await loadProducts();renderCart()})();
