@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chipafrimarket | Shop Africa</title><link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script></head>
+<body>
+<header><a class="brand" href="index.html">CHIPA<span>FRI</span>MARKET</a>
+<div class="country"><label for="countrySelect">Delivering to</label><select id="countrySelect"></select></div>
+<a class="admin-link" href="admin.html">Admin</a></header>
+<div class="promo">LAUNCH OFFER · 50% OFF SELECTED PRODUCTS · FREE SHIPPING*</div>
+<section class="hero"><p class="eyebrow">ONE MARKETPLACE. MANY COUNTRIES.</p><h1>Shop across Africa.</h1>
+<p>Discover everyday essentials, solar products, agricultural supplies and more.</p><p class="small">*Free shipping is subject to delivery coverage and order conditions.</p></section>
+<main><div class="toolbar"><input id="search" placeholder="Search products…" aria-label="Search products"><span id="rateStatus">Loading exchange rates…</span></div>
+<div id="products" class="products"><p>Loading products…</p></div></main>
+<aside id="cartPanel" class="cart"><div class="cart-head"><h2>Your cart</h2><button id="closeCart">×</button></div><div id="cartItems"></div><p id="cartTotal"></p>
+<button id="checkoutBtn" class="primary">Request order</button></aside>
+<button id="cartButton" class="cart-button">Cart (<span id="cartCount">0</span>)</button>
+<dialog id="checkoutDialog"><form id="checkoutForm"><h2>Request your order</h2><input name="customer_name" placeholder="Your name" required><input name="email" type="email" placeholder="Email address" required><input name="phone" placeholder="Phone / WhatsApp" required><textarea name="address" placeholder="Delivery address" required></textarea><button class="primary">Submit order request</button><button type="button" id="cancelCheckout">Cancel</button><p class="small">This submits an order request; it does not collect payment.</p></form></dialog>
+<footer>© Chipafrimarket · USD is the master pricing currency.</footer>
+<script src="config.js"></script><script src="country-currency.js"></script><script src="app.js"></script>
+</body></html>
