@@ -1,20 +1,160 @@
+
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Chipafrimarket | Shop Africa</title><link rel="stylesheet" href="styles.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script></head>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chipafrimarket | Shop Africa</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
 <body>
-<header><a class="brand" href="index.html">CHIPA<span>FRI</span>MARKET</a>
-<div class="country"><label for="countrySelect">Delivering to</label><select id="countrySelect"></select></div>
-<a class="admin-link" href="admin.html">Admin</a></header>
-<div class="promo">LAUNCH OFFER · 50% OFF SELECTED PRODUCTS · FREE SHIPPING*</div>
-<section class="hero"><p class="eyebrow">ONE MARKETPLACE. MANY COUNTRIES.</p><h1>Shop across Africa.</h1>
-<p>Discover everyday essentials, solar products, agricultural supplies and more.</p><p class="small">*Free shipping is subject to delivery coverage and order conditions.</p></section>
-<main><div class="toolbar"><input id="search" placeholder="Search products…" aria-label="Search products"><span id="rateStatus">Loading exchange rates…</span></div>
-<div id="products" class="products"><p>Loading products…</p></div></main>
-<aside id="cartPanel" class="cart"><div class="cart-head"><h2>Your cart</h2><button id="closeCart">×</button></div><div id="cartItems"></div><p id="cartTotal"></p>
-<button id="checkoutBtn" class="primary">Request order</button></aside>
-<button id="cartButton" class="cart-button">Cart (<span id="cartCount">0</span>)</button>
-<dialog id="checkoutDialog"><form id="checkoutForm"><h2>Request your order</h2><input name="customer_name" placeholder="Your name" required><input name="email" type="email" placeholder="Email address" required><input name="phone" placeholder="Phone / WhatsApp" required><textarea name="address" placeholder="Delivery address" required></textarea><button class="primary">Submit order request</button><button type="button" id="cancelCheckout">Cancel</button><p class="small">This submits an order request; it does not collect payment.</p></form></dialog>
-<footer>© Chipafrimarket · USD is the master pricing currency.</footer>
-<script src="config.js"></script><script src="country-currency.js"></script><script src="app.js"></script>
-</body></html>
+
+<header>
+  <a class="brand" href="index.html">CHIPA<span>FRI</span>MARKET</a>
+
+  <div class="country">
+    <label for="countrySelect">Delivering to</label>
+    <select id="countrySelect"></select>
+  </div>
+
+  <button id="accountButton" type="button">My Account</button>
+  <a class="admin-link" href="admin.html">Admin</a>
+</header>
+
+<div class="promo">
+  LAUNCH OFFER · 50% OFF SELECTED PRODUCTS · FREE SHIPPING*
+</div>
+
+<section class="hero">
+  <p class="eyebrow">ONE MARKETPLACE. MANY COUNTRIES.</p>
+  <h1>Shop across Africa.</h1>
+  <p>Discover everyday essentials, solar products, agricultural supplies and more.</p>
+  <p class="small">*Free shipping is subject to delivery coverage and order conditions.</p>
+</section>
+
+<main>
+  <div class="toolbar">
+    <input id="search" placeholder="Search products…" aria-label="Search products">
+    <span id="rateStatus">Loading exchange rates…</span>
+  </div>
+
+  <div id="products" class="products">
+    <p>Loading products…</p>
+  </div>
+</main>
+
+<!-- CUSTOMER ACCOUNT -->
+<dialog id="accountDialog">
+  <div class="account-box">
+
+    <h2>Customer Account</h2>
+    <p id="accountMessage">Register or sign in to manage your orders.</p>
+
+    <section id="registerSection">
+      <h3>Create an account</h3>
+
+      <form id="registerForm">
+        <input name="full_name" placeholder="Full name" required>
+        <input name="email" type="email" placeholder="Email address" required>
+        <input name="password" type="password"
+               placeholder="Create password" minlength="8" required>
+
+        <button class="primary" type="submit">Create account</button>
+      </form>
+    </section>
+
+    <hr>
+
+    <section id="loginSection">
+      <h3>Already registered? Sign in</h3>
+
+      <form id="loginForm">
+        <input name="email" type="email" placeholder="Email address" required>
+        <input name="password" type="password" placeholder="Password" required>
+
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+    </section>
+
+    <button id="resendVerification" type="button">
+      Resend verification email
+    </button>
+
+    <section id="loggedInSection" hidden>
+      <h3 id="customerGreeting"></h3>
+      <p>Your account is active.</p>
+      <button id="viewOrdersButton" type="button">My Orders</button>
+      <button id="signOutButton" type="button">Sign out</button>
+    </section>
+
+    <button id="closeAccount" type="button">Close</button>
+
+  </div>
+</dialog>
+
+<!-- CUSTOMER ORDER HISTORY -->
+<section id="orderHistory" hidden>
+  <h2>My Orders</h2>
+  <div id="customerOrders">
+    <p>Your orders will appear here.</p>
+  </div>
+</section>
+
+<!-- CART -->
+<aside id="cartPanel" class="cart">
+  <div class="cart-head">
+    <h2>Your cart</h2>
+    <button id="closeCart">×</button>
+  </div>
+
+  <div id="cartItems"></div>
+  <p id="cartTotal"></p>
+
+  <button id="checkoutBtn" class="primary">Request order</button>
+</aside>
+
+<button id="cartButton" class="cart-button">
+  Cart (<span id="cartCount">0</span>)
+</button>
+
+<!-- CHECKOUT -->
+<dialog id="checkoutDialog">
+  <form id="checkoutForm">
+    <h2>Request your order</h2>
+
+    <input name="customer_name" placeholder="Your name" required>
+    <input name="email" type="email" placeholder="Email address" required>
+    <input name="phone" placeholder="Phone / WhatsApp" required>
+    <textarea name="address" placeholder="Delivery address" required></textarea>
+
+    <button class="primary" type="submit">Submit order request</button>
+    <button type="button" id="cancelCheckout">Cancel</button>
+
+    <p class="small">
+      Guest checkout is available. This submits an order request;
+      it does not collect payment.
+    </p>
+  </form>
+</dialog>
+
+<!-- ORDER RECEIPT -->
+<dialog id="receiptDialog">
+  <div>
+    <h2>Order receipt</h2>
+    <div id="receiptContent"></div>
+    <button id="closeReceipt" type="button">Close receipt</button>
+  </div>
+</dialog>
+
+<footer>
+  © Chipafrimarket · USD is the master pricing currency.
+</footer>
+
+<script src="config.js"></script>
+<script src="country-currency.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
