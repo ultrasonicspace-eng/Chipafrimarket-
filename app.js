@@ -13,6 +13,12 @@ let country = "";
 let currentUser = null;
 let customerOrders = [];
 
+const MINIMUM_ORDER_USD = 100;
+
+// ------------------------------
+// SUPABASE CONNECTION
+// ------------------------------
+
 if (
   cfg.SUPABASE_URL.startsWith("http") &&
   !cfg.SUPABASE_ANON_KEY.startsWith("YOUR_")
@@ -67,6 +73,7 @@ async function loadRates() {
 
     if (data.result === "success") {
       rates = data.rates;
+
       $("#rateStatus").textContent =
         "Reference rates updated: " +
         new Date(data.time_last_update_utc).toLocaleDateString();
@@ -95,6 +102,39 @@ function salePrice(product) {
     ? Number(product.price_usd) *
       (1 - cfg.DISCOUNT_PERCENT / 100)
     : Number(product.price_usd);
+}
+
+// ------------------------------
+// CART CALCULATIONS
+// ------------------------------
+
+function getCartTotal() {
+  return cart.reduce(
+    (sum, product) => sum + salePrice(product),
+    0
+  );
+}
+
+function getCartGroups() {
+  const groups = new Map();
+
+  cart.forEach(product => {
+    if (!groups.has(product.id)) {
+      groups.set(product.id, {
+        product,
+        quantity: 0
+      });
+    }
+
+    groups.get(product.id).quantity++;
+  });
+
+  return Array.from(groups.values());
+}
+
+function canCheckout() {
+  return cart.length > 0 &&
+    getCartTotal() >= MINIMUM_ORDER_USD;
 }
 
 // ------------------------------
@@ -229,7 +269,7 @@ $("#registerForm").addEventListener("submit", async event => {
     showMessage("Your account is ready. You are signed in.");
   } else {
     showMessage(
-      "Registration successful! Check your email and click the verification link before signing in."
+      "Registration successful! Check your email and verify your account."
     );
   }
 
@@ -283,7 +323,7 @@ $("#resendVerification").addEventListener("click", async () => {
   });
 
   showMessage(
-    error ? error.message : "Verification email sent. Check your inbox."
+    error ? error.message : "Verification email sent."
   );
 });
 
@@ -387,15 +427,19 @@ function renderProducts() {
           src="${esc(product.image_url || "https://placehold.co/600x400?text=Chipafrimarket")}"
           alt="${esc(product.name)}"
         >
+
         <div class="product-info">
           <h3>${esc(product.name)}</h3>
+
           <div class="price">
             ${money(salePrice(product))}
             ${product.discount_enabled
               ? `<span class="old">${money(product.price_usd)}</span>`
               : ""}
           </div>
+
           <p>${esc(product.description || "")}</p>
+
           <button type="button" data-add="${esc(product.id)}">
             Add to cart
           </button>
@@ -423,27 +467,105 @@ function renderProducts() {
 // ------------------------------
 
 function renderCart() {
+  const groups = getCartGroups();
+  const totalUSD = getCartTotal();
+
   $("#cartCount").textContent = cart.length;
 
-  $("#cartItems").innerHTML = cart.map((product, index) => `
+  $("#cartItems").innerHTML = groups.map(({ product, quantity }) => `
     <div class="cart-line">
-      <span>
-        ${esc(product.name)}<br>
-        ${money(salePrice(product))}
-      </span>
-      <button type="button" data-remove="${index}">Remove</button>
+      <div class="product-info">
+        <strong>${esc(product.name)}</strong>
+
+        <p>${money(salePrice(product))} each</p>
+
+        <div class="quantity-controls">
+          <button type="button"
+            data-minus="${esc(product.id)}">−</button>
+
+          <strong>${quantity}</strong>
+
+          <button type="button"
+            data-plus="${esc(product.id)}">+</button>
+        </div>
+
+        <p>Subtotal:
+          ${money(salePrice(product) * quantity)}
+        </p>
+      </div>
+
+      <button type="button"
+        data-remove="${esc(product.id)}">
+        Remove
+      </button>
     </div>
   `).join("");
 
   $("#cartTotal").textContent =
-    "Total: " +
-    money(cart.reduce(
-      (sum, product) => sum + salePrice(product), 0
-    ));
+    "Total after discount: " + money(totalUSD);
 
+  // Minimum purchase message
+  let minimumMessage = $("#minimumOrderMessage");
+
+  if (!minimumMessage) {
+    minimumMessage = document.createElement("p");
+    minimumMessage.id = "minimumOrderMessage";
+
+    $("#checkoutBtn").insertAdjacentElement(
+      "beforebegin",
+      minimumMessage
+    );
+  }
+
+  if (totalUSD >= MINIMUM_ORDER_USD) {
+    minimumMessage.textContent =
+      "Minimum order reached! You can checkout.";
+
+    minimumMessage.style.color = "green";
+  } else {
+    minimumMessage.textContent =
+      `Add ${money(MINIMUM_ORDER_USD - totalUSD)} more to reach the $100 minimum order.`;
+
+    minimumMessage.style.color = "red";
+  }
+
+  $("#checkoutBtn").disabled = !canCheckout();
+
+  // Increase quantity
+  document.querySelectorAll("[data-plus]").forEach(button => {
+    button.addEventListener("click", () => {
+      const product = products.find(
+        item => item.id === button.dataset.plus
+      );
+
+      if (product) {
+        cart.push(product);
+        renderCart();
+      }
+    });
+  });
+
+  // Decrease quantity
+  document.querySelectorAll("[data-minus]").forEach(button => {
+    button.addEventListener("click", () => {
+      const index = cart.findIndex(
+        item => item.id === button.dataset.minus
+      );
+
+      if (index !== -1) {
+        cart.splice(index, 1);
+        renderCart();
+      }
+    });
+  });
+
+  // Remove all quantities
   document.querySelectorAll("[data-remove]").forEach(button => {
     button.addEventListener("click", () => {
-      cart.splice(Number(button.dataset.remove), 1);
+      cart = cart.filter(
+        item => item.id !== button.dataset.remove
+      );
+
       renderCart();
     });
   });
@@ -466,6 +588,11 @@ $("#search").addEventListener("input", renderProducts);
 $("#checkoutBtn").addEventListener("click", () => {
   if (!cart.length) {
     alert("Your cart is empty.");
+    return;
+  }
+
+  if (!canCheckout()) {
+    alert("Minimum purchase is $100 USD after discount.");
     return;
   }
 
@@ -498,17 +625,29 @@ function showReceipt(order) {
     <p>Email: ${esc(order.email)}</p>
     <p>Phone: ${esc(order.phone)}</p>
     <p>Delivery address: ${esc(order.address)}</p>
+
     <p>Date: ${esc(order.created_at
       ? new Date(order.created_at).toLocaleString()
       : new Date().toLocaleString())}</p>
+
     <hr>
+
     <h3>Items</h3>
+
     ${items.map(item => `
-      <p>${esc(item.name)} — USD ${Number(item.unit_price_usd).toFixed(2)}</p>
+      <p>
+        ${esc(item.name)} × ${Number(item.quantity || 1)}
+        — USD ${(Number(item.unit_price_usd) *
+          Number(item.quantity || 1)).toFixed(2)}
+      </p>
     `).join("")}
+
     <hr>
+
     <h3>Total: USD ${Number(order.total_usd).toFixed(2)}</h3>
+
     <p>Status: ${esc(order.status || "pending")}</p>
+
     <p>Thank you for shopping with Chipafrimarket.</p>
   `;
 
@@ -530,11 +669,14 @@ $("#checkoutForm").addEventListener("submit", async event => {
 
   if (!cart.length) return alert("Your cart is empty.");
 
-  const form = new FormData(event.target);
+  const total = getCartTotal();
 
-  const total = cart.reduce(
-    (sum, product) => sum + salePrice(product), 0
-  );
+  if (total < MINIMUM_ORDER_USD) {
+    alert("Your discounted order must be at least $100 USD.");
+    return;
+  }
+
+  const form = new FormData(event.target);
 
   const order = {
     customer_name: form.get("customer_name"),
@@ -546,9 +688,10 @@ $("#checkoutForm").addEventListener("submit", async event => {
 
     user_id: currentUser ? currentUser.id : null,
 
-    items: cart.map(product => ({
+    items: getCartGroups().map(({ product, quantity }) => ({
       product_id: product.id,
       name: product.name,
+      quantity: quantity,
       unit_price_usd: salePrice(product)
     })),
 
@@ -556,17 +699,16 @@ $("#checkoutForm").addEventListener("submit", async event => {
     status: "pending"
   };
 
-  const { error } = await sb.from("orders").insert(order);
+  const { data, error } = await sb
+    .from("orders")
+    .insert(order)
+    .select()
+    .single();
 
   if (error) {
     alert("Order request failed: " + error.message);
     return;
   }
-
-  const receipt = {
-    ...order,
-    created_at: new Date().toISOString()
-  };
 
   cart = [];
   renderCart();
@@ -576,7 +718,7 @@ $("#checkoutForm").addEventListener("submit", async event => {
   $("#checkoutDialog").close();
   $("#cartPanel").classList.remove("open");
 
-  showReceipt(receipt);
+  showReceipt(data);
 
   if (currentUser) {
     await refreshCustomerOrders();
