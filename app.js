@@ -867,4 +867,287 @@ function renderProducts() {
   document.querySelectorAll("[data-add]").forEach(button => {
     button.addEventListener("click", () => {
       const product = products.find(
-        item => item.id === b
+        item => item.id === button.dataset.add
+      );
+
+      if (product) {
+        cart.push(product);
+        renderCart();
+      }
+    });
+  });
+}
+
+// ------------------------------
+// SHOPPING CART
+// ------------------------------
+
+function renderCart() {
+  const groups = getCartGroups();
+  const totalUSD = getCartTotal();
+
+  $("#cartCount").textContent = cart.length;
+
+  $("#cartItems").innerHTML = groups.map(({ product, quantity }) => `
+    <div class="cart-line">
+      <div class="product-info">
+        <strong>${esc(product.name)}</strong>
+
+        <p>${money(salePrice(product))} each</p>
+
+        <div class="quantity-controls">
+          <button type="button"
+            data-minus="${esc(product.id)}">−</button>
+
+          <strong>${quantity}</strong>
+
+          <button type="button"
+            data-plus="${esc(product.id)}">+</button>
+        </div>
+
+        <p>Subtotal:
+          ${money(salePrice(product) * quantity)}
+        </p>
+      </div>
+
+      <button type="button"
+        data-remove="${esc(product.id)}">
+        Remove
+      </button>
+    </div>
+  `).join("");
+
+  $("#cartTotal").textContent =
+    "Total after discount: " + money(totalUSD);
+
+  let minimumMessage = $("#minimumOrderMessage");
+
+  if (!minimumMessage) {
+    minimumMessage = document.createElement("p");
+    minimumMessage.id = "minimumOrderMessage";
+
+    $("#checkoutBtn").insertAdjacentElement(
+      "beforebegin",
+      minimumMessage
+    );
+  }
+
+  if (totalUSD >= MINIMUM_ORDER_USD) {
+    minimumMessage.textContent =
+      "Minimum order reached! You can checkout.";
+
+    minimumMessage.style.color = "green";
+  } else {
+    minimumMessage.textContent =
+      `Add ${money(MINIMUM_ORDER_USD - totalUSD)} more to reach the $100 minimum order.`;
+
+    minimumMessage.style.color = "red";
+  }
+
+  $("#checkoutBtn").disabled = !canCheckout();
+
+  document.querySelectorAll("[data-plus]").forEach(button => {
+    button.addEventListener("click", () => {
+      const product = products.find(
+        item => item.id === button.dataset.plus
+      );
+
+      if (product) {
+        cart.push(product);
+        renderCart();
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-minus]").forEach(button => {
+    button.addEventListener("click", () => {
+      const index = cart.findIndex(
+        item => item.id === button.dataset.minus
+      );
+
+      if (index !== -1) {
+        cart.splice(index, 1);
+        renderCart();
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-remove]").forEach(button => {
+    button.addEventListener("click", () => {
+      cart = cart.filter(
+        item => item.id !== button.dataset.remove
+      );
+
+      renderCart();
+    });
+  });
+}
+
+$("#cartButton").addEventListener("click", () => {
+  $("#cartPanel").classList.add("open");
+});
+
+$("#closeCart").addEventListener("click", () => {
+  $("#cartPanel").classList.remove("open");
+});
+
+$("#search").addEventListener("input", renderProducts);
+
+// ------------------------------
+// CHECKOUT
+// ------------------------------
+
+$("#checkoutBtn").addEventListener("click", () => {
+  if (!cart.length) {
+    alert("Your cart is empty.");
+    return;
+  }
+
+  if (!canCheckout()) {
+    alert("Minimum purchase is $100 USD after discount.");
+    return;
+  }
+
+  $("#checkoutDialog").showModal();
+
+  if (currentUser) {
+    $("#checkoutForm [name=email]").value =
+      currentUser.email || "";
+
+    $("#checkoutForm [name=customer_name]").value =
+      currentUser.user_metadata?.full_name || "";
+  }
+});
+
+$("#cancelCheckout").addEventListener("click", () => {
+  $("#checkoutDialog").close();
+});
+
+// ------------------------------
+// ORDER RECEIPT
+// ------------------------------
+
+function showReceipt(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  $("#receiptContent").innerHTML = `
+    <p><strong>Chipafrimarket</strong></p>
+
+    <p>Order reference: ${esc(order.id || "Submitted")}</p>
+    <p>Customer: ${esc(order.customer_name)}</p>
+    <p>Email: ${esc(order.email)}</p>
+    <p>Phone: ${esc(order.phone)}</p>
+    <p>Delivery address: ${esc(order.address)}</p>
+
+    <p>Date: ${esc(order.created_at
+      ? new Date(order.created_at).toLocaleString()
+      : new Date().toLocaleString())}</p>
+
+    <hr>
+
+    <h3>Items</h3>
+
+    ${items.map(item => `
+      <p>
+        ${esc(item.name)} × ${Number(item.quantity || 1)}
+        — USD ${(Number(item.unit_price_usd) *
+          Number(item.quantity || 1)).toFixed(2)}
+      </p>
+    `).join("")}
+
+    <hr>
+
+    <h3>Total: USD ${Number(order.total_usd).toFixed(2)}</h3>
+
+    <p>Status: ${esc(order.status || "pending")}</p>
+
+    <p>Payment: ${esc(readableStatus(order.payment_status || "unpaid"))}</p>
+
+    <p>Thank you for shopping with Chipafrimarket.</p>
+  `;
+
+  $("#receiptDialog").showModal();
+}
+
+$("#closeReceipt").addEventListener("click", () => {
+  $("#receiptDialog").close();
+});
+
+// ------------------------------
+// SUBMIT ORDER
+// ------------------------------
+
+$("#checkoutForm").addEventListener("submit", async event => {
+  event.preventDefault();
+
+  if (!sb) return alert("Supabase is not configured.");
+
+  if (!cart.length) return alert("Your cart is empty.");
+
+  const total = getCartTotal();
+
+  if (total < MINIMUM_ORDER_USD) {
+    alert("Your discounted order must be at least $100 USD.");
+    return;
+  }
+
+  const form = new FormData(event.target);
+
+  const order = {
+    customer_name: form.get("customer_name"),
+    email: form.get("email"),
+    phone: form.get("phone"),
+    address: form.get("address"),
+    country_code: country,
+    currency_code: currency,
+
+    user_id: currentUser ? currentUser.id : null,
+
+    items: getCartGroups().map(({ product, quantity }) => ({
+      product_id: product.id,
+      name: product.name,
+      quantity: quantity,
+      unit_price_usd: salePrice(product)
+    })),
+
+    total_usd: total,
+    status: "pending",
+    payment_status: "unpaid"
+  };
+
+  const { data, error } = await sb
+    .from("orders")
+    .insert(order)
+    .select()
+    .single();
+
+  if (error) {
+    alert("Order request failed: " + error.message);
+    return;
+  }
+
+  cart = [];
+  renderCart();
+
+  event.target.reset();
+
+  $("#checkoutDialog").close();
+  $("#cartPanel").classList.remove("open");
+
+  showReceipt(data);
+
+  if (currentUser) {
+    await refreshCustomerOrders();
+  }
+});
+
+// ------------------------------
+// START WEBSITE
+// ------------------------------
+
+(async () => {
+  await initializeAuth();
+  await loadRates();
+  await loadProducts();
+  renderCart();
+})();
