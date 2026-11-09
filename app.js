@@ -2,34 +2,35 @@
 const cfg = window.CHIPA_CONFIG || {};
 const markets = window.AFRICAN_MARKETS || [];
 
-const $ = selector => document.querySelector(selector);
+const $ = s => document.querySelector(s);
 
 let sb = null;
 let products = [];
 let cart = [];
 let rates = { USD: 1 };
 let currency = "USD";
-let country = "NG";
+let country = "";
 let currentUser = null;
 let customerOrders = [];
 let paymentInstructions = [];
 let paymentReceipts = [];
 let customerNotifications = [];
 
+// Preserve selected receipt files during order-section refreshes
+const selectedPaymentFiles = new Map();
+
 const MINIMUM_ORDER_USD = 100;
 const MAX_RECEIPT_SIZE = 5 * 1024 * 1024;
-const DISCOUNT_PERCENT = Number(cfg.DISCOUNT_PERCENT ?? 50);
 
 // ------------------------------
 // SUPABASE CONNECTION
 // ------------------------------
 
 if (
-  cfg.SUPABASE_URL &&
+  cfg.SUPABASE_URL?.startsWith("http") &&
   cfg.SUPABASE_ANON_KEY &&
-  cfg.SUPABASE_URL.startsWith("http") &&
   !cfg.SUPABASE_ANON_KEY.startsWith("YOUR_") &&
-  window.supabase?.createClient
+  window.supabase
 ) {
   sb = window.supabase.createClient(
     cfg.SUPABASE_URL,
@@ -43,40 +44,30 @@ if (
 
 const select = $("#countrySelect");
 
+markets.forEach(([name, code, cur]) => {
+  const option = document.createElement("option");
+  option.value = code;
+  option.textContent = `${name} (${cur})`;
+  select.append(option);
+});
+
+const saved = localStorage.getItem("chipa-country") || "NG";
+select.value = saved;
+setMarket(saved);
+
+select.addEventListener("change", () => {
+  setMarket(select.value);
+  renderProducts();
+  renderCart();
+});
+
 function setMarket(code) {
   country = code;
 
-  const market = markets.find(item => item[1] === code);
+  const market = markets.find(x => x[1] === code);
   currency = market ? market[2] : "USD";
 
   localStorage.setItem("chipa-country", code);
-}
-
-if (select) {
-  select.innerHTML = "";
-
-  markets.forEach(([name, code, cur]) => {
-    const option = document.createElement("option");
-    option.value = code;
-    option.textContent = `${name} (${cur})`;
-    select.append(option);
-  });
-
-  const saved = localStorage.getItem("chipa-country") || "NG";
-  const validCountry = markets.some(item => item[1] === saved)
-    ? saved
-    : "NG";
-
-  select.value = validCountry;
-  setMarket(validCountry);
-
-  select.addEventListener("change", () => {
-    setMarket(select.value);
-    renderProducts();
-    renderCart();
-  });
-} else {
-  console.error("Country selector #countrySelect was not found.");
 }
 
 // ------------------------------
@@ -89,38 +80,23 @@ async function loadRates() {
       "https://open.er-api.com/v6/latest/USD"
     );
 
-    if (!response.ok) {
-      throw new Error("Exchange rate service unavailable.");
-    }
-
     const data = await response.json();
 
-    if (data.result === "success" && data.rates) {
+    if (data.result === "success") {
       rates = data.rates;
 
-      if ($("#rateStatus")) {
-        $("#rateStatus").textContent =
-          "Reference rates updated: " +
-          new Date(data.time_last_update_utc).toLocaleDateString();
-      }
-    } else {
-      throw new Error("Invalid exchange rate response.");
-    }
-  } catch (error) {
-    console.error(error);
-
-    if ($("#rateStatus")) {
       $("#rateStatus").textContent =
-        "Exchange rates unavailable; showing USD prices.";
+        "Reference rates updated: " +
+        new Date(data.time_last_update_utc).toLocaleDateString();
     }
+  } catch {
+    $("#rateStatus").textContent =
+      "Exchange rates unavailable; showing USD prices.";
   }
-
-  renderProducts();
-  renderCart();
 }
 
 function money(usd) {
-  const amount = Number(usd) * (Number(rates[currency]) || 1);
+  const amount = Number(usd) * (rates[currency] || 1);
 
   try {
     return new Intl.NumberFormat(undefined, {
@@ -133,11 +109,11 @@ function money(usd) {
 }
 
 function salePrice(product) {
-  const original = Number(product.price_usd) || 0;
+  const discount = Number(cfg.DISCOUNT_PERCENT ?? 50);
 
   return product.discount_enabled
-    ? original * (1 - DISCOUNT_PERCENT / 100)
-    : original;
+    ? Number(product.price_usd) * (1 - discount / 100)
+    : Number(product.price_usd);
 }
 
 // ------------------------------
@@ -174,7 +150,7 @@ function canCheckout() {
 }
 
 // ------------------------------
-// SECURITY AND DISPLAY HELPERS
+// SECURITY / DISPLAY
 // ------------------------------
 
 function esc(value) {
@@ -188,8 +164,7 @@ function esc(value) {
 }
 
 function showMessage(message) {
-  const element = $("#accountMessage");
-  if (element) element.textContent = message;
+  $("#accountMessage").textContent = message;
 }
 
 function readableStatus(value) {
@@ -198,56 +173,44 @@ function readableStatus(value) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+// ------------------------------
+// CUSTOMER AUTHENTICATION
+// ------------------------------
+
 function emailRedirectUrl() {
   return window.location.origin + window.location.pathname;
 }
 
-// ------------------------------
-// CUSTOMER ACCOUNT INTERFACE
-// ------------------------------
-
 function updateAccountInterface() {
   const loggedIn = Boolean(currentUser);
 
-  if ($("#registerSection")) {
-    $("#registerSection").hidden = loggedIn;
-  }
-
-  if ($("#loginSection")) {
-    $("#loginSection").hidden = loggedIn;
-  }
-
-  if ($("#resendVerification")) {
-    $("#resendVerification").hidden = loggedIn;
-  }
-
-  if ($("#loggedInSection")) {
-    $("#loggedInSection").hidden = !loggedIn;
-  }
+  $("#registerSection").hidden = loggedIn;
+  $("#loginSection").hidden = loggedIn;
+  $("#resendVerification").hidden = loggedIn;
+  $("#loggedInSection").hidden = !loggedIn;
 
   if (loggedIn) {
     const name =
       currentUser.user_metadata?.full_name ||
       currentUser.email;
 
-    if ($("#customerGreeting")) {
-      $("#customerGreeting").textContent = `Welcome, ${name}`;
-    }
+    $("#customerGreeting").textContent =
+      `Welcome, ${name}`;
 
     showMessage("You are signed in.");
-  } else if ($("#customerGreeting")) {
+  } else {
     $("#customerGreeting").textContent = "";
   }
 }
 
 // ------------------------------
-// CUSTOMER NOTIFICATIONS
+// PAYMENT CENTRE CONTAINER
 // ------------------------------
 
 function getNotificationsContainer() {
   let container = $("#customerNotifications");
 
-  if (!container && $("#customerOrders")) {
+  if (!container) {
     container = document.createElement("div");
     container.id = "customerNotifications";
     container.style.margin = "20px 0";
@@ -261,38 +224,8 @@ function getNotificationsContainer() {
   return container;
 }
 
-function renderCustomerNotifications() {
-  const container = getNotificationsContainer();
-  if (!container) return;
-
-  if (!customerNotifications.length) {
-    container.innerHTML = `
-      <h3>Notifications</h3>
-      <p>No notifications yet.</p>
-    `;
-    return;
-  }
-
-  container.innerHTML = `
-    <h3>Notifications</h3>
-
-    ${customerNotifications.map(note => `
-      <article class="product"
-        style="margin-bottom:10px;padding:12px;">
-
-        <strong>${esc(note.title)}</strong>
-        <p>${esc(note.message)}</p>
-
-        <small>
-          ${esc(new Date(note.created_at).toLocaleString())}
-        </small>
-      </article>
-    `).join("")}
-  `;
-}
-
 // ------------------------------
-// CUSTOMER ORDER HISTORY
+// LOAD ORDERS AND PAYMENT DATA
 // ------------------------------
 
 async function refreshCustomerOrders() {
@@ -305,13 +238,8 @@ async function refreshCustomerOrders() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    console.error(error);
-
-    if ($("#customerOrders")) {
-      $("#customerOrders").textContent =
-        "Could not load orders: " + error.message;
-    }
-
+    $("#customerOrders").textContent =
+      "Could not load orders: " + error.message;
     return;
   }
 
@@ -365,9 +293,42 @@ async function refreshCustomerOrders() {
   renderCustomerOrders();
 }
 
+// ------------------------------
+// CUSTOMER NOTIFICATIONS
+// ------------------------------
+
+function renderCustomerNotifications() {
+  const container = getNotificationsContainer();
+
+  if (!customerNotifications.length) {
+    container.innerHTML = `
+      <h3>Notifications</h3>
+      <p>No notifications yet.</p>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <h3>Notifications</h3>
+
+    ${customerNotifications.map(note => `
+      <article class="product" style="margin-bottom:10px;padding:12px;">
+        <strong>${esc(note.title)}</strong>
+        <p>${esc(note.message)}</p>
+        <small>
+          ${esc(new Date(note.created_at).toLocaleString())}
+        </small>
+      </article>
+    `).join("")}
+  `;
+}
+
+// ------------------------------
+// CUSTOMER ORDER HISTORY
+// ------------------------------
+
 function renderCustomerOrders() {
   const container = $("#customerOrders");
-  if (!container) return;
 
   const heading = $("#orderHistory h2");
 
@@ -394,18 +355,19 @@ function renderCustomerOrders() {
     const paymentStatus = order.payment_status ||
       (instruction ? "awaiting_payment" : "unpaid");
 
+    let receiptMessage = "No receipt submitted yet.";
+
+    if (receipt) {
+      receiptMessage =
+        "Receipt status: " + readableStatus(receipt.review_status);
+    }
+
     const canUpload =
       Boolean(instruction) &&
       paymentStatus !== "paid" &&
       (!receipt || receipt.review_status === "rejected");
 
-    let receiptMessage = "No receipt submitted yet.";
-
-    if (receipt) {
-      receiptMessage =
-        "Receipt status: " +
-        readableStatus(receipt.review_status);
-    }
+    const savedFile = selectedPaymentFiles.get(order.id);
 
     return `
       <article class="product"
@@ -456,9 +418,7 @@ function renderCustomerOrders() {
 
                 <small>
                   Sent:
-                  ${esc(instruction.sent_at
-                    ? new Date(instruction.sent_at).toLocaleString()
-                    : "")}
+                  ${esc(new Date(instruction.sent_at).toLocaleString())}
                 </small>
               `
               : `
@@ -472,10 +432,11 @@ function renderCustomerOrders() {
           <hr>
 
           <h4>Payment receipt</h4>
+
           <p>${esc(receiptMessage)}</p>
 
           ${
-            receipt?.admin_note
+            receipt && receipt.admin_note
               ? `<p>Admin message: ${esc(receipt.admin_note)}</p>`
               : ""
           }
@@ -486,13 +447,18 @@ function renderCustomerOrders() {
                 <div style="margin-top:12px;">
                   <label>
                     Upload payment receipt
-
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp,application/pdf"
                       data-payment-file="${esc(order.id)}"
                     >
                   </label>
+
+                  <small
+                    data-file-name="${esc(order.id)}"
+                    style="display:block;margin-top:5px;">
+                    ${savedFile ? esc(savedFile.name) : "No file chosen"}
+                  </small>
 
                   <button
                     type="button"
@@ -505,7 +471,7 @@ function renderCustomerOrders() {
                   </small>
                 </div>
               `
-              : receipt?.review_status === "submitted"
+              : receipt && receipt.review_status === "submitted"
                 ? "<p>Your receipt is awaiting admin review.</p>"
                 : paymentStatus === "paid"
                   ? "<p>Payment has been verified. Thank you!</p>"
@@ -517,6 +483,38 @@ function renderCustomerOrders() {
     `;
   }).join("");
 
+  // PRESERVE SELECTED FILES
+  container.querySelectorAll("[data-payment-file]").forEach(input => {
+    const orderId = input.dataset.paymentFile;
+    const savedFile = selectedPaymentFiles.get(orderId);
+    const label = container.querySelector(
+      `[data-file-name="${orderId}"]`
+    );
+
+    if (savedFile && label) {
+      label.textContent = savedFile.name;
+    }
+
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+
+      if (file) {
+        selectedPaymentFiles.set(orderId, file);
+
+        const fileLabel = container.querySelector(
+          `[data-file-name="${orderId}"]`
+        );
+
+        if (fileLabel) {
+          fileLabel.textContent = file.name;
+        }
+
+        console.log("Payment receipt selected:", file.name);
+      }
+    });
+  });
+
+  // VIEW ORDER RECEIPTS
   container.querySelectorAll("[data-receipt]").forEach(button => {
     button.addEventListener("click", () => {
       const order = customerOrders.find(
@@ -527,6 +525,7 @@ function renderCustomerOrders() {
     });
   });
 
+  // SUBMIT PAYMENT RECEIPTS
   container.querySelectorAll("[data-upload-receipt]").forEach(button => {
     button.addEventListener("click", async () => {
       const orderId = button.dataset.uploadReceipt;
@@ -535,7 +534,10 @@ function renderCustomerOrders() {
         `[data-payment-file="${orderId}"]`
       );
 
-      const file = input?.files?.[0];
+      // Use preserved file if the original input was refreshed
+      const file =
+        selectedPaymentFiles.get(orderId) ||
+        input?.files?.[0];
 
       if (!file) {
         alert("Please select a receipt file first.");
@@ -548,7 +550,7 @@ function renderCustomerOrders() {
 }
 
 // ------------------------------
-// PAYMENT RECEIPT UPLOAD
+// CUSTOMER PAYMENT RECEIPT UPLOAD
 // ------------------------------
 
 async function uploadPaymentReceipt(orderId, file, button) {
@@ -608,12 +610,8 @@ async function uploadPaymentReceipt(orderId, file, button) {
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
-  const uniqueId = window.crypto?.randomUUID
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
   const safeName =
-    `${Date.now()}-${uniqueId}.${extension || "file"}`;
+    `${Date.now()}-${crypto.randomUUID()}.${extension || "file"}`;
 
   const storagePath =
     `${currentUser.id}/${orderId}/${safeName}`;
@@ -621,65 +619,67 @@ async function uploadPaymentReceipt(orderId, file, button) {
   button.disabled = true;
   button.textContent = "Uploading...";
 
-  try {
-    const { error: uploadError } = await sb.storage
-      .from("payment-receipts")
-      .upload(storagePath, file, {
-        contentType: file.type,
-        upsert: false
-      });
+  // UPLOAD TO PRIVATE STORAGE BUCKET
+  const { error: uploadError } = await sb.storage
+    .from("payment-receipts")
+    .upload(storagePath, file, {
+      contentType: file.type,
+      upsert: false
+    });
 
-    if (uploadError) {
-      throw uploadError;
-    }
-
-    const { error: insertError } = await sb
-      .from("payment_receipts")
-      .insert({
-        order_id: orderId,
-        user_id: currentUser.id,
-        storage_path: storagePath,
-        file_name: file.name,
-        review_status: "submitted"
-      });
-
-    if (insertError) {
-      await sb.storage
-        .from("payment-receipts")
-        .remove([storagePath]);
-
-      throw insertError;
-    }
-
-    alert(
-      "Receipt submitted successfully. Your payment is awaiting verification."
-    );
-
-    await refreshCustomerOrders();
-
-  } catch (error) {
-    alert("Receipt submission failed: " + error.message);
+  if (uploadError) {
+    alert("File upload failed: " + uploadError.message);
     button.disabled = false;
     button.textContent = "Submit receipt";
+    return;
   }
+
+  // SAVE RECEIPT RECORD
+  const { error: insertError } = await sb
+    .from("payment_receipts")
+    .insert({
+      order_id: orderId,
+      user_id: currentUser.id,
+      storage_path: storagePath,
+      file_name: file.name,
+      review_status: "submitted"
+    });
+
+  if (insertError) {
+    await sb.storage
+      .from("payment-receipts")
+      .remove([storagePath]);
+
+    alert("Receipt record failed: " + insertError.message);
+
+    button.disabled = false;
+    button.textContent = "Submit receipt";
+    return;
+  }
+
+  // Clear saved file after successful submission
+  selectedPaymentFiles.delete(orderId);
+
+  alert(
+    "Receipt submitted successfully. Your payment is awaiting verification."
+  );
+
+  await refreshCustomerOrders();
 }
 
 // ------------------------------
 // REGISTER
 // ------------------------------
 
-$("#registerForm")?.addEventListener("submit", async event => {
+$("#registerForm").addEventListener("submit", async event => {
   event.preventDefault();
 
-  if (!sb) {
-    alert("Supabase is not configured.");
-    return;
-  }
+  if (!sb) return alert("Supabase is not configured.");
 
   const form = new FormData(event.target);
 
-  const fullName = String(form.get("full_name") || "").trim();
-  const email = String(form.get("email") || "").trim();
+  const fullName = form.get("full_name").trim();
+  const email = form.get("email").trim();
   const password = form.get("password");
 
   showMessage("Creating your account...");
@@ -699,8 +699,6 @@ $("#registerForm")?.addEventListener("submit", async event => {
   }
 
   if (data.session) {
-    currentUser = data.session.user;
-    updateAccountInterface();
     showMessage("Your account is ready. You are signed in.");
   } else {
     showMessage(
@@ -715,20 +713,17 @@ $("#registerForm")?.addEventListener("submit", async event => {
 // LOGIN
 // ------------------------------
 
-$("#loginForm")?.addEventListener("submit", async event => {
+$("#loginForm").addEventListener("submit", async event => {
   event.preventDefault();
 
-  if (!sb) {
-    alert("Supabase is not configured.");
-    return;
-  }
+  if (!sb) return alert("Supabase is not configured.");
 
   const form = new FormData(event.target);
 
   showMessage("Signing in...");
 
-  const { data, error } = await sb.auth.signInWithPassword({
-    email: String(form.get("email") || "").trim(),
+  const { error } = await sb.auth.signInWithPassword({
+    email: form.get("email").trim(),
     password: form.get("password")
   });
 
@@ -737,24 +732,20 @@ $("#loginForm")?.addEventListener("submit", async event => {
     return;
   }
 
-  currentUser = data.user;
-  updateAccountInterface();
   showMessage("Login successful.");
-
   event.target.reset();
-  await refreshCustomerOrders();
 });
 
 // ------------------------------
 // RESEND VERIFICATION
 // ------------------------------
 
-$("#resendVerification")?.addEventListener("click", async () => {
+$("#resendVerification").addEventListener("click", async () => {
   if (!sb) return;
 
   const email =
-    $("#registerForm [name=email]")?.value.trim() ||
-    $("#loginForm [name=email]")?.value.trim();
+    $("#registerForm [name=email]").value.trim() ||
+    $("#loginForm [name=email]").value.trim();
 
   if (!email) {
     showMessage("Enter your email address first.");
@@ -780,7 +771,7 @@ $("#resendVerification")?.addEventListener("click", async () => {
 // LOGOUT
 // ------------------------------
 
-$("#signOutButton")?.addEventListener("click", async () => {
+$("#signOutButton").addEventListener("click", async () => {
   if (!sb) return;
 
   const { error } = await sb.auth.signOut();
@@ -795,12 +786,11 @@ $("#signOutButton")?.addEventListener("click", async () => {
   paymentInstructions = [];
   paymentReceipts = [];
   customerNotifications = [];
+  selectedPaymentFiles.clear();
 
   updateAccountInterface();
 
-  if ($("#orderHistory")) {
-    $("#orderHistory").hidden = true;
-  }
+  $("#orderHistory").hidden = true;
 
   showMessage("You have signed out.");
 });
@@ -809,28 +799,26 @@ $("#signOutButton")?.addEventListener("click", async () => {
 // ACCOUNT DIALOG
 // ------------------------------
 
-$("#accountButton")?.addEventListener("click", () => {
-  $("#accountDialog")?.showModal();
+$("#accountButton").addEventListener("click", () => {
+  $("#accountDialog").showModal();
 });
 
-$("#closeAccount")?.addEventListener("click", () => {
-  $("#accountDialog")?.close();
+$("#closeAccount").addEventListener("click", () => {
+  $("#accountDialog").close();
 });
 
-$("#viewOrdersButton")?.addEventListener("click", async () => {
+$("#viewOrdersButton").addEventListener("click", async () => {
   if (!currentUser) {
     showMessage("Please sign in first.");
     return;
   }
 
-  $("#accountDialog")?.close();
+  $("#accountDialog").close();
+  $("#orderHistory").hidden = false;
 
-  if ($("#orderHistory")) {
-    $("#orderHistory").hidden = false;
-    $("#orderHistory").scrollIntoView({
-      behavior: "smooth"
-    });
-  }
+  $("#orderHistory").scrollIntoView({
+    behavior: "smooth"
+  });
 
   await refreshCustomerOrders();
 });
@@ -841,36 +829,24 @@ $("#viewOrdersButton")?.addEventListener("click", async () => {
 
 async function initializeAuth() {
   if (!sb) {
-    showMessage("Supabase connection unavailable. Check config.js.");
-    updateAccountInterface();
+    showMessage("Connect Supabase before using customer accounts.");
     return;
   }
 
-  try {
-    const { data, error } = await sb.auth.getSession();
+  const { data } = await sb.auth.getSession();
 
-    if (error) throw error;
+  currentUser = data.session?.user || null;
 
-    currentUser = data.session?.user || null;
-    updateAccountInterface();
+  updateAccountInterface();
 
-    if (currentUser) {
-      await refreshCustomerOrders();
-    }
-
-    sb.auth.onAuthStateChange((_event, session) => {
-      currentUser = session?.user || null;
-      updateAccountInterface();
-
-      if (currentUser) {
-        refreshCustomerOrders();
-      }
-    });
-
-  } catch (error) {
-    console.error("Authentication initialization failed:", error);
-    showMessage("Could not initialize customer accounts.");
+  if (currentUser) {
+    await refreshCustomerOrders();
   }
+
+  sb.auth.onAuthStateChange((_event, session) => {
+    currentUser = session?.user || null;
+    updateAccountInterface();
+  });
 }
 
 // ------------------------------
@@ -880,34 +856,27 @@ async function initializeAuth() {
 async function loadProducts() {
   if (!sb) {
     $("#products").innerHTML =
-      "<p>Supabase is not connected. Check config.js.</p>";
+      "<p>Connect Supabase in config.js and add products in the admin portal.</p>";
     return;
   }
 
-  try {
-    const { data, error } = await sb
-      .from("products")
-      .select("*")
-      .eq("active", true)
-      .order("created_at", { ascending: false });
+  const { data, error } = await sb
+    .from("products")
+    .select("*")
+    .eq("active", true)
+    .order("created_at", { ascending: false });
 
-    if (error) throw error;
-
-    products = data || [];
-    renderProducts();
-
-  } catch (error) {
-    console.error("Product loading failed:", error);
-    $("#products").textContent =
-      "Could not load products: " + error.message;
+  if (error) {
+    $("#products").textContent = error.message;
+    return;
   }
+
+  products = data || [];
+  renderProducts();
 }
 
 function renderProducts() {
-  const container = $("#products");
-  if (!container) return;
-
-  const query = ($("#search")?.value || "").toLowerCase();
+  const query = $("#search").value.toLowerCase();
 
   const shown = products.filter(product =>
     (product.name + " " + (product.description || ""))
@@ -915,7 +884,7 @@ function renderProducts() {
       .includes(query)
   );
 
-  container.innerHTML = shown.length
+  $("#products").innerHTML = shown.length
     ? shown.map(product => `
       <article class="product">
         <img
@@ -928,7 +897,6 @@ function renderProducts() {
 
           <div class="price">
             ${money(salePrice(product))}
-
             ${product.discount_enabled
               ? `<span class="old">${money(product.price_usd)}</span>`
               : ""}
@@ -944,7 +912,7 @@ function renderProducts() {
     `).join("")
     : "<p>No products found.</p>";
 
-  container.querySelectorAll("[data-add]").forEach(button => {
+  document.querySelectorAll("[data-add]").forEach(button => {
     button.addEventListener("click", () => {
       const product = products.find(
         item => item.id === button.dataset.add
@@ -963,18 +931,14 @@ function renderProducts() {
 // ------------------------------
 
 function renderCart() {
-  const container = $("#cartItems");
-  if (!container) return;
-
   const groups = getCartGroups();
   const totalUSD = getCartTotal();
 
   $("#cartCount").textContent = cart.length;
 
-  container.innerHTML = groups.map(({ product, quantity }) => `
+  $("#cartItems").innerHTML = groups.map(({ product, quantity }) => `
     <div class="cart-line">
       <div class="product-info">
-
         <strong>${esc(product.name)}</strong>
 
         <p>${money(salePrice(product))} each</p>
@@ -989,8 +953,7 @@ function renderCart() {
             data-plus="${esc(product.id)}">+</button>
         </div>
 
-        <p>
-          Subtotal:
+        <p>Subtotal:
           ${money(salePrice(product) * quantity)}
         </p>
       </div>
@@ -1031,7 +994,7 @@ function renderCart() {
 
   $("#checkoutBtn").disabled = !canCheckout();
 
-  container.querySelectorAll("[data-plus]").forEach(button => {
+  document.querySelectorAll("[data-plus]").forEach(button => {
     button.addEventListener("click", () => {
       const product = products.find(
         item => item.id === button.dataset.plus
@@ -1044,7 +1007,7 @@ function renderCart() {
     });
   });
 
-  container.querySelectorAll("[data-minus]").forEach(button => {
+  document.querySelectorAll("[data-minus]").forEach(button => {
     button.addEventListener("click", () => {
       const index = cart.findIndex(
         item => item.id === button.dataset.minus
@@ -1057,7 +1020,7 @@ function renderCart() {
     });
   });
 
-  container.querySelectorAll("[data-remove]").forEach(button => {
+  document.querySelectorAll("[data-remove]").forEach(button => {
     button.addEventListener("click", () => {
       cart = cart.filter(
         item => item.id !== button.dataset.remove
@@ -1068,21 +1031,21 @@ function renderCart() {
   });
 }
 
-$("#cartButton")?.addEventListener("click", () => {
-  $("#cartPanel")?.classList.add("open");
+$("#cartButton").addEventListener("click", () => {
+  $("#cartPanel").classList.add("open");
 });
 
-$("#closeCart")?.addEventListener("click", () => {
-  $("#cartPanel")?.classList.remove("open");
+$("#closeCart").addEventListener("click", () => {
+  $("#cartPanel").classList.remove("open");
 });
 
-$("#search")?.addEventListener("input", renderProducts);
+$("#search").addEventListener("input", renderProducts);
 
 // ------------------------------
 // CHECKOUT
 // ------------------------------
 
-$("#checkoutBtn")?.addEventListener("click", () => {
+$("#checkoutBtn").addEventListener("click", () => {
   if (!cart.length) {
     alert("Your cart is empty.");
     return;
@@ -1104,8 +1067,8 @@ $("#checkoutBtn")?.addEventListener("click", () => {
   }
 });
 
-$("#cancelCheckout")?.addEventListener("click", () => {
-  $("#checkoutDialog")?.close();
+$("#cancelCheckout").addEventListener("click", () => {
+  $("#checkoutDialog").close();
 });
 
 // ------------------------------
@@ -1144,11 +1107,9 @@ function showReceipt(order) {
 
     <h3>Total: USD ${Number(order.total_usd).toFixed(2)}</h3>
 
-    <p>Status: ${esc(readableStatus(order.status))}</p>
+    <p>Status: ${esc(order.status || "pending")}</p>
 
-    <p>Payment:
-      ${esc(readableStatus(order.payment_status || "unpaid"))}
-    </p>
+    <p>Payment: ${esc(readableStatus(order.payment_status || "unpaid"))}</p>
 
     <p>Thank you for shopping with Chipafrimarket.</p>
   `;
@@ -1156,26 +1117,20 @@ function showReceipt(order) {
   $("#receiptDialog").showModal();
 }
 
-$("#closeReceipt")?.addEventListener("click", () => {
-  $("#receiptDialog")?.close();
+$("#closeReceipt").addEventListener("click", () => {
+  $("#receiptDialog").close();
 });
 
 // ------------------------------
 // SUBMIT ORDER
 // ------------------------------
 
-$("#checkoutForm")?.addEventListener("submit", async event => {
+$("#checkoutForm").addEventListener("submit", async event => {
   event.preventDefault();
 
-  if (!sb) {
-    alert("Supabase is not configured.");
-    return;
-  }
+  if (!sb) return alert("Supabase is not configured.");
 
-  if (!cart.length) {
-    alert("Your cart is empty.");
-    return;
-  }
+  if (!cart.length) return alert("Your cart is empty.");
 
   const total = getCartTotal();
 
@@ -1187,11 +1142,10 @@ $("#checkoutForm")?.addEventListener("submit", async event => {
   const form = new FormData(event.target);
 
   const order = {
-    customer_name: String(form.get("customer_name") || "").trim(),
-    email: String(form.get("email") || "").trim(),
-    phone: String(form.get("phone") || "").trim(),
-    address: String(form.get("address") || "").trim(),
-
+    customer_name: form.get("customer_name"),
+    email: form.get("email"),
+    phone: form.get("phone"),
+    address: form.get("address"),
     country_code: country,
     currency_code: currency,
 
@@ -1200,7 +1154,7 @@ $("#checkoutForm")?.addEventListener("submit", async event => {
     items: getCartGroups().map(({ product, quantity }) => ({
       product_id: product.id,
       name: product.name,
-      quantity,
+      quantity: quantity,
       unit_price_usd: salePrice(product)
     })),
 
@@ -1209,44 +1163,29 @@ $("#checkoutForm")?.addEventListener("submit", async event => {
     payment_status: "unpaid"
   };
 
-  const checkoutButton = $("#checkoutForm button[type=submit]");
+  const { data, error } = await sb
+    .from("orders")
+    .insert(order)
+    .select()
+    .single();
 
-  if (checkoutButton) {
-    checkoutButton.disabled = true;
-    checkoutButton.textContent = "Submitting...";
+  if (error) {
+    alert("Order request failed: " + error.message);
+    return;
   }
 
-  try {
-    const { data, error } = await sb
-      .from("orders")
-      .insert(order)
-      .select()
-      .single();
+  cart = [];
+  renderCart();
 
-    if (error) throw error;
+  event.target.reset();
 
-    cart = [];
-    renderCart();
+  $("#checkoutDialog").close();
+  $("#cartPanel").classList.remove("open");
 
-    event.target.reset();
+  showReceipt(data);
 
-    $("#checkoutDialog").close();
-    $("#cartPanel").classList.remove("open");
-
-    showReceipt(data);
-
-    if (currentUser) {
-      await refreshCustomerOrders();
-    }
-
-  } catch (error) {
-    alert("Order request failed: " + error.message);
-
-  } finally {
-    if (checkoutButton) {
-      checkoutButton.disabled = false;
-      checkoutButton.textContent = "Place order";
-    }
+  if (currentUser) {
+    await refreshCustomerOrders();
   }
 });
 
@@ -1254,12 +1193,9 @@ $("#checkoutForm")?.addEventListener("submit", async event => {
 // START WEBSITE
 // ------------------------------
 
-(async function startWebsite() {
-  updateAccountInterface();
-
+(async () => {
   await initializeAuth();
   await loadRates();
   await loadProducts();
-
   renderCart();
 })();
