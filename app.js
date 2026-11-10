@@ -534,7 +534,6 @@ function renderCustomerOrders() {
         `[data-payment-file="${orderId}"]`
       );
 
-      // Use preserved file if the original input was refreshed
       const file =
         selectedPaymentFiles.get(orderId) ||
         input?.files?.[0];
@@ -619,7 +618,6 @@ async function uploadPaymentReceipt(orderId, file, button) {
   button.disabled = true;
   button.textContent = "Uploading...";
 
-  // UPLOAD TO PRIVATE STORAGE BUCKET
   const { error: uploadError } = await sb.storage
     .from("payment-receipts")
     .upload(storagePath, file, {
@@ -634,7 +632,6 @@ async function uploadPaymentReceipt(orderId, file, button) {
     return;
   }
 
-  // SAVE RECEIPT RECORD
   const { error: insertError } = await sb
     .from("payment_receipts")
     .insert({
@@ -657,7 +654,6 @@ async function uploadPaymentReceipt(orderId, file, button) {
     return;
   }
 
-  // Clear saved file after successful submission
   selectedPaymentFiles.delete(orderId);
 
   alert(
@@ -993,6 +989,7 @@ function renderCart() {
   }
 
   $("#checkoutBtn").disabled = !canCheckout();
+  $("#whatsappCheckoutBtn").disabled = !canCheckout();
 
   document.querySelectorAll("[data-plus]").forEach(button => {
     button.addEventListener("click", () => {
@@ -1042,7 +1039,7 @@ $("#closeCart").addEventListener("click", () => {
 $("#search").addEventListener("input", renderProducts);
 
 // ------------------------------
-// CHECKOUT
+// NORMAL CHECKOUT
 // ------------------------------
 
 $("#checkoutBtn").addEventListener("click", () => {
@@ -1069,6 +1066,65 @@ $("#checkoutBtn").addEventListener("click", () => {
 
 $("#cancelCheckout").addEventListener("click", () => {
   $("#checkoutDialog").close();
+});
+
+// ------------------------------
+// WHATSAPP CHECKOUT
+// ------------------------------
+
+$("#whatsappCheckoutBtn").addEventListener("click", () => {
+  if (!cart.length) {
+    alert("Your cart is empty.");
+    return;
+  }
+
+  if (!canCheckout()) {
+    alert("Minimum purchase is $100 USD after discount.");
+    return;
+  }
+
+  const groups = getCartGroups();
+
+  const selectedMarket = markets.find(
+    market => market[1] === country
+  );
+
+  const countryName = selectedMarket
+    ? selectedMarket[0]
+    : country || "Not selected";
+
+  let message =
+    "Hello Chipafrimarket! I would like to complete my order.\n\n";
+
+  message += "MY ORDER:\n\n";
+
+  groups.forEach(({ product, quantity }) => {
+    const unitPrice = salePrice(product);
+    const subtotal = unitPrice * quantity;
+
+    message +=
+      `${product.name} x ${quantity}\n` +
+      `Unit price: USD ${unitPrice.toFixed(2)}\n` +
+      `Subtotal: USD ${subtotal.toFixed(2)}\n\n`;
+  });
+
+  const totalUSD = getCartTotal();
+
+  message += "--------------------------\n";
+  message += `TOTAL: USD ${totalUSD.toFixed(2)}\n`;
+  message += `Local currency estimate: ${money(totalUSD)}\n`;
+  message += `Delivery country: ${countryName}\n\n`;
+
+  message +=
+    "Please confirm product availability, delivery arrangements and payment instructions.\n\n";
+
+  message += "Thank you!";
+
+  const whatsappURL =
+    "https://wa.me/447721722684?text=" +
+    encodeURIComponent(message);
+
+  window.open(whatsappURL, "_blank");
 });
 
 // ------------------------------
@@ -1122,7 +1178,7 @@ $("#closeReceipt").addEventListener("click", () => {
 });
 
 // ------------------------------
-// SUBMIT ORDER
+// SUBMIT NORMAL ORDER
 // ------------------------------
 
 $("#checkoutForm").addEventListener("submit", async event => {
