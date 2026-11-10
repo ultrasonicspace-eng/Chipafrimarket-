@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -112,7 +111,21 @@
   <div id="cartItems"></div>
   <p id="cartTotal"></p>
 
-  <button id="checkoutBtn" class="primary">Request order</button>
+  <!-- NORMAL CHECKOUT -->
+  <button id="checkoutBtn" class="primary" type="button">
+    Request order
+  </button>
+
+  <!-- WHATSAPP CHECKOUT -->
+  <button
+    id="whatsappCheckoutBtn"
+    class="primary"
+    type="button"
+    style="background:#25D366;color:#fff;width:100%;margin-top:10px;"
+  >
+    Complete Your Order via WhatsApp
+  </button>
+
 </aside>
 
 <button id="cartButton" class="cart-button">
@@ -150,6 +163,22 @@
 
 <footer>
   © Chipafrimarket · USD is the master pricing currency.
+
+  <div class="customer-support">
+    <h3>Customer Support</h3>
+    <p>
+      WhatsApp:
+      <a href="https://wa.me/447721722684" target="_blank" rel="noopener">
+        +44 7721 722684
+      </a>
+    </p>
+    <p>
+      Email:
+      <a href="mailto:chipmarketafrica@gmail.com">
+        chipmarketafrica@gmail.com
+      </a>
+    </p>
+  </div>
 </footer>
 
 <script src="config.js"></script>
