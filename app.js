@@ -19,7 +19,7 @@ let customerNotifications = [];
 // Preserve selected receipt files during order-section refreshes
 const selectedPaymentFiles = new Map();
 
-const MINIMUM_ORDER_USD = 100;
+const MINIMUM_ORDER_USD = 45;
 const MAX_RECEIPT_SIZE = 5 * 1024 * 1024;
 
 // ------------------------------
@@ -147,6 +147,11 @@ function getCartGroups() {
 function canCheckout() {
   return cart.length > 0 &&
     getCartTotal() >= MINIMUM_ORDER_USD;
+}
+
+// WhatsApp orders have no minimum purchase amount
+function canWhatsAppCheckout() {
+  return cart.length > 0;
 }
 
 // ------------------------------
@@ -983,13 +988,15 @@ function renderCart() {
     minimumMessage.style.color = "green";
   } else {
     minimumMessage.textContent =
-      `Add ${money(MINIMUM_ORDER_USD - totalUSD)} more to reach the $100 minimum order.`;
+      `Add ${money(MINIMUM_ORDER_USD - totalUSD)} more to reach the $45 minimum order.`;
 
     minimumMessage.style.color = "red";
   }
 
   $("#checkoutBtn").disabled = !canCheckout();
-  $("#whatsappCheckoutBtn").disabled = !canCheckout();
+
+  // WhatsApp checkout only requires a non-empty cart
+  $("#whatsappCheckoutBtn").disabled = !canWhatsAppCheckout();
 
   document.querySelectorAll("[data-plus]").forEach(button => {
     button.addEventListener("click", () => {
@@ -1049,7 +1056,7 @@ $("#checkoutBtn").addEventListener("click", () => {
   }
 
   if (!canCheckout()) {
-    alert("Minimum purchase is $100 USD after discount.");
+    alert("Minimum purchase is $45 USD after discount.");
     return;
   }
 
@@ -1078,10 +1085,7 @@ $("#whatsappCheckoutBtn").addEventListener("click", () => {
     return;
   }
 
-  if (!canCheckout()) {
-    alert("Minimum purchase is $100 USD after discount.");
-    return;
-  }
+  // No minimum order restriction for WhatsApp checkout
 
   const groups = getCartGroups();
 
@@ -1191,7 +1195,7 @@ $("#checkoutForm").addEventListener("submit", async event => {
   const total = getCartTotal();
 
   if (total < MINIMUM_ORDER_USD) {
-    alert("Your discounted order must be at least $100 USD.");
+    alert("Your discounted order must be at least $45 USD.");
     return;
   }
 
