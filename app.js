@@ -1,4 +1,3 @@
-
 const cfg = window.CHIPA_CONFIG || {};
 const markets = window.AFRICAN_MARKETS || [];
 
@@ -19,7 +18,7 @@ let customerNotifications = [];
 // Preserve selected receipt files during order-section refreshes
 const selectedPaymentFiles = new Map();
 
-const MINIMUM_ORDER_USD = 45;
+const MINIMUM_ORDER_USD = 10;
 const MAX_RECEIPT_SIZE = 5 * 1024 * 1024;
 
 // ------------------------------
@@ -988,7 +987,7 @@ function renderCart() {
     minimumMessage.style.color = "green";
   } else {
     minimumMessage.textContent =
-      `Add ${money(MINIMUM_ORDER_USD - totalUSD)} more to reach the $45 minimum order.`;
+      `Add ${money(MINIMUM_ORDER_USD - totalUSD)} more to reach the $10 minimum order.`;
 
     minimumMessage.style.color = "red";
   }
@@ -1056,7 +1055,7 @@ $("#checkoutBtn").addEventListener("click", () => {
   }
 
   if (!canCheckout()) {
-    alert("Minimum purchase is $45 USD after discount.");
+    alert("Minimum purchase is $10 USD after discount.");
     return;
   }
 
@@ -1195,7 +1194,7 @@ $("#checkoutForm").addEventListener("submit", async event => {
   const total = getCartTotal();
 
   if (total < MINIMUM_ORDER_USD) {
-    alert("Your discounted order must be at least $45 USD.");
+    alert("Your discounted order must be at least $10 USD.");
     return;
   }
 
@@ -1223,29 +1222,58 @@ $("#checkoutForm").addEventListener("submit", async event => {
     payment_status: "unpaid"
   };
 
-  const { data, error } = await sb
-    .from("orders")
-    .insert(order)
-    .select()
-    .single();
+  const submitButton = event.target.querySelector(
+    'button[type="submit"]'
+  );
 
-  if (error) {
-    alert("Order request failed: " + error.message);
-    return;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Submitting order...";
   }
 
-  cart = [];
-  renderCart();
+  try {
+    // Insert without requesting the database row back.
+    // This avoids requiring SELECT permission for guest orders.
+    const { error } = await sb
+      .from("orders")
+      .insert(order);
 
-  event.target.reset();
+    if (error) {
+      alert("Order request failed: " + error.message);
+      return;
+    }
 
-  $("#checkoutDialog").close();
-  $("#cartPanel").classList.remove("open");
+    const receiptOrder = {
+      ...order,
+      id: "Submitted",
+      created_at: new Date().toISOString()
+    };
 
-  showReceipt(data);
+    cart = [];
+    renderCart();
 
-  if (currentUser) {
-    await refreshCustomerOrders();
+    event.target.reset();
+
+    $("#checkoutDialog").close();
+    $("#cartPanel").classList.remove("open");
+
+    showReceipt(receiptOrder);
+
+    if (currentUser) {
+      await refreshCustomerOrders();
+    } else {
+      alert(
+        "Your order has been submitted successfully. " +
+        "Please save your receipt details."
+      );
+    }
+  } catch (error) {
+    alert("Order request failed: " + error.message);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "Place order";
+    }
   }
 });
 
